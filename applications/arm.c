@@ -21,6 +21,8 @@
 #define RX_MAX_BUF    8
 
 rt_device_t serial;//串口设备
+rt_mutex_t serial_mutex;//串口互斥锁
+rt_sem_t arm_sem;//机械臂信号量 保证执行任务不被打断
 //收集数据相关
 uint8_t Rx_Data[24] = {0};
 uint8_t Rx_index = 0;
@@ -64,6 +66,8 @@ void bus_servo_control(uint8_t id, uint16_t value, uint16_t time)
 {
     if (value >= 96 && value <= 4000)
     {
+        rt_mutex_take(serial_mutex, RT_WAITING_FOREVER);
+
         const uint8_t s_id = id & 0xff;
         const uint8_t len = 0x07;
         const uint8_t cmd = 0x03;
@@ -91,6 +95,8 @@ void bus_servo_control(uint8_t id, uint16_t value, uint16_t time)
         data[10] = checknum;
 
         rt_device_write(serial, 0, data, 11);
+
+        rt_mutex_release(serial_mutex);
     }
 }
 
@@ -222,28 +228,50 @@ void bus_servo_uart_recv(uint8_t Rx_Temp)
 
 void arm_fixed_execution(void)
 {
-
+    rt_sem_take(arm_sem, RT_WAITING_FOREVER);
+    //机械臂固定执行
+    //先立起来
+    bus_servo_control(2, 2048, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(3, 2048, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(4, 2048, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(6, 3000, 1500);
+    rt_thread_mdelay(1000);
+    //往下面探
+    bus_servo_control(2, 2900, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(3, 2550, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(4, 2300, 1500);
+    rt_thread_mdelay(1000);
+    //开夹子 闭夹子
+    bus_servo_control(6, 1200, 3000);
+    rt_thread_mdelay(1000);
+    bus_servo_control(6, 3000, 1000);
+    rt_thread_mdelay(1000);
+    bus_servo_control(2, 2048, 1000);
+    rt_sem_release(arm_sem);
 }
 
 void arm_control_thread(void* arg)
 {   //控制2 3 4 6舵机
-    uint8_t id2 = 2;
-    uint8_t id3 = 3;
-    uint8_t id4 = 4;
-    uint8_t id6 = 6;
+    uint8_t flag = 0;
+    serial_mutex = rt_mutex_create("serial_mutex", RT_IPC_FLAG_FIFO);//串口互斥锁
+    arm_sem = rt_sem_create("arm_sem", 1, RT_IPC_FLAG_FIFO);
     Arm_Init();
 
     while(1)
     {
-        //机械臂固定执行
-        //先立起来
-        bus_servo_control(id2, 2048, 1000);
-        bus_servo_control(id3, 2048, 1000);
-        bus_servo_control(id4, 2048, 1000);
-        bus_servo_control(id6, 3000, 1000);
-
-        //往下面探
-
-
+        if(flag == 0)
+        {
+            arm_fixed_execution();
+            flag = 1;
+        }
+        bus_servo_control(2, 2048, 1000);
+        rt_thread_mdelay(1000);
+        bus_servo_control(6, 3000, 1000);
     }
+
 }
