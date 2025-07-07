@@ -22,7 +22,7 @@ int targetA, targetB, targetC, targetD;
 struct car_motor carMotor[MOTOR_ID_NUM] = {
         {GET_PIN(B, 3), GET_PIN(B, 4), "pwm2", 2, RT_NULL},//左前
         {GET_PIN(F, 7), GET_PIN(F, 6), "pwm2", 3, RT_NULL},//右前
-        {GET_PIN(A, 11), GET_PIN(A, 10), "pwm2", 1, RT_NULL},//左后
+        {GET_PIN(A, 11), GET_PIN(A, 12), "pwm2", 1, RT_NULL},//左后
         {GET_PIN(C, 11), GET_PIN(C, 12), "pwm2", 4, RT_NULL}//右后
 };
 
