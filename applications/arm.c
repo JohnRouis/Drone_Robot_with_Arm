@@ -17,10 +17,13 @@
 #include "usart.h"
 #include "gpio.h"
 
-#define UART_NAME   "uart3"
+#define UART3_NAME   "uart3"
+#define UART1_NAME   "uart1"
 #define RX_MAX_BUF    8
 
-rt_device_t serial;//串口设备
+rt_device_t serial_k230;//串口设备k230
+
+rt_device_t serial_arm;//机械臂串口设备
 rt_mutex_t serial_mutex;//串口互斥锁
 rt_sem_t arm_sem;//机械臂信号量 保证执行任务不被打断
 //收集数据相关
@@ -30,31 +33,51 @@ uint8_t Rx_Flag = 0;
 uint8_t RecvFlag = 0;
 //串口2配置
 struct serial_configure uart3_set_parg = RT_SERIAL_CONFIG_DEFAULT;
+struct serial_configure uart1_set_parg = RT_SERIAL_CONFIG_DEFAULT;
 
 /* 串口中断接收数据 */
 rt_err_t rx_irq(rt_device_t dev,rt_size_t size)
 {
 //    rt_size_t len;
     uint8_t res[8];
-    rt_device_read(serial, 0, res, size);
+    rt_device_read(serial_arm, 0, res, size);
 //    rt_device_write(serial, 0, &res[0], sizeof(res[0]));
     bus_servo_uart_recv(res[0]);
     return 0;
 }
 
+//K230相关数据接收
+rt_err_t uart1_rx_irq(rt_device_t dev, rt_size_t size)
+{
+    uint8_t res[8];
+    rt_device_read(serial_k230, 0, res, size);
+    return RT_EOK;
+}
+
 void Arm_Init(void)
 {
-    serial = rt_device_find(UART_NAME);
-    if(serial == RT_NULL)
+    serial_arm = rt_device_find(UART3_NAME);
+    if(serial_arm == RT_NULL)
     {
         rt_kprintf("fail to open\n");
     }
     else {
-        rt_device_control(serial, RT_DEVICE_CTRL_CONFIG, (void*)&uart3_set_parg);
-        rt_device_open(serial, RT_DEVICE_OFLAG_RDWR | RT_DEVICE_FLAG_DMA_RX);
-        rt_device_set_rx_indicate(serial, rx_irq);
+        rt_device_control(serial_arm, RT_DEVICE_CTRL_CONFIG, (void*)&uart3_set_parg);
+        rt_device_open(serial_arm, RT_DEVICE_OFLAG_RDWR | RT_DEVICE_FLAG_DMA_RX);
+        rt_device_set_rx_indicate(serial_arm, rx_irq);
     }
 
+    serial_k230 = rt_device_find(UART1_NAME);
+    if(serial_k230 == RT_NULL)
+    {
+        rt_kprintf("fail to find uart1\n");
+    }
+    else
+    {
+        rt_device_control(serial_k230, RT_DEVICE_CTRL_CONFIG, (void*)&uart1_set_parg);
+        rt_device_open(serial_k230, RT_DEVICE_OFLAG_RDWR | RT_DEVICE_FLAG_DMA_RX);
+        rt_device_set_rx_indicate(serial_k230, uart1_rx_irq);
+    }
 }
 
 /* 控制总线舵机，
@@ -94,7 +117,7 @@ void bus_servo_control(uint8_t id, uint16_t value, uint16_t time)
         data[9] = time_L;
         data[10] = checknum;
 
-        rt_device_write(serial, 0, data, 11);
+        rt_device_write(serial_arm, 0, data, 11);
 
         rt_mutex_release(serial_mutex);
     }
@@ -122,7 +145,7 @@ void bus_servo_set_id(uint8_t id)
         data[5] = addr;
         data[6] = set_id;
         data[7] = checknum;
-        rt_device_write(serial, 0, data, 8);
+        rt_device_write(serial_arm, 0, data, 8);
     }
 }
 
@@ -149,7 +172,7 @@ void bus_servo_read(uint8_t id)
         data[5] = param_H;
         data[6] = param_L;
         data[7] = checknum;
-        rt_device_write(serial, 0, data, 8);
+        rt_device_write(serial_arm, 0, data, 8);
     }
 }
 
