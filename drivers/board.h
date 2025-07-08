@@ -66,10 +66,14 @@ extern "C"
  *                 such as     #define BSP_UART1_RX_USING_DMA
  *
  */
+#define BSP_USING UART6
+#define BSP_UART6_TX_PIN       "PC6"
+#define BSP_UART6_RX_PIN       "PC7"
 
 #define BSP_USING_UART1
 #define BSP_UART1_TX_PIN       "PA9"
 #define BSP_UART1_RX_PIN       "PA10"
+#define BSP_UART1_RX_USING_DMA
 
 #define BSP_USING_UART3
 #define BSP_UART3_TX_PIN       "PB10"

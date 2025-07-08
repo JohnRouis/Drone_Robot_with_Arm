@@ -21,36 +21,96 @@
 #define UART1_NAME   "uart1"
 #define RX_MAX_BUF    8
 
+#define MAX_BUFFER_SIZE  64  // 1字节帧头 + 2字节X + 2字节Y + 4字节Size
+
 rt_device_t serial_k230;//串口设备k230
 
 rt_device_t serial_arm;//机械臂串口设备
 rt_mutex_t serial_mutex;//串口互斥锁
 rt_sem_t arm_sem;//机械臂信号量 保证执行任务不被打断
-//收集数据相关
+//机械臂收集数据相关
 uint8_t Rx_Data[24] = {0};
 uint8_t Rx_index = 0;
 uint8_t Rx_Flag = 0;
 uint8_t RecvFlag = 0;
+
+//机械臂追踪相关
+uint8_t delta_x = 0;//x轴差距
+uint8_t delta_y = 0;//y轴差距
+uint8_t delta_size = 0;//大小差距
+
+uint8_t arm_ids[6] = {1, 2, 3, 4, 5, 6};//舵机ID号
+uint16_t servo_value[6] = {900, 2048, 2048, 3500, 2048, 1500};//记录舵机当前位置
+
 //串口2配置
 struct serial_configure uart3_set_parg = RT_SERIAL_CONFIG_DEFAULT;
 struct serial_configure uart1_set_parg = RT_SERIAL_CONFIG_DEFAULT;
+//k230串口接收机状态
+static uint8_t rx_buffer[MAX_BUFFER_SIZE];
+static uint8_t rx_index = 0;
+vision_data_t vision_data = {0};
+static rt_bool_t receiving_message = RT_FALSE;
 
 /* 串口中断接收数据 */
 rt_err_t rx_irq(rt_device_t dev,rt_size_t size)
 {
 //    rt_size_t len;
-    uint8_t res[8];
-    rt_device_read(serial_arm, 0, res, size);
-//    rt_device_write(serial, 0, &res[0], sizeof(res[0]));
-    bus_servo_uart_recv(res[0]);
+    uint8_t temp;
+    if(rt_device_read(serial_arm, 0, &temp, 1))
+    {
+        bus_servo_uart_recv(temp);
+    }
+//    rt_device_write(serial_arm, 0, &vision_data , sizeof(vision_data_t));
+
     return 0;
 }
 
 //K230相关数据接收
 rt_err_t uart1_rx_irq(rt_device_t dev, rt_size_t size)
 {
-    uint8_t res[8];
-    rt_device_read(serial_k230, 0, res, size);
+    uint8_t temp;
+
+    while(rt_device_read(serial_k230, 0, &temp, 1) == 1)
+    {
+        // 如果是开始字符'#'，重置缓冲区并开始新消息
+        if (temp == '#')
+        {
+            rx_index = 0;
+            receiving_message = RT_TRUE;
+            rx_buffer[rx_index++] = temp;
+        }
+        // 如果正在接收消息
+        else if (receiving_message)
+        {
+                    // 存储字符到缓冲区
+            if (rx_index < MAX_BUFFER_SIZE - 1)
+            {
+                rx_buffer[rx_index++] = temp;
+            }
+
+             // 如果收到换行符，表示消息结束
+            if (temp == '\n')
+            {
+                // 确保缓冲区以NULL结尾
+                rx_buffer[rx_index] = '\0';
+
+                // 解析消息
+                int32_t x, y, s;
+                if (sscanf(rx_buffer + 1, "%d,%d,%d", &x, &y, &s) == 3)
+                {
+                    // 更新视觉数据
+                    vision_data.delta_x = x;
+                    vision_data.delta_y = y;
+                    vision_data.delta_size = s;
+                    vision_data.updated = RT_TRUE;
+
+
+                }
+                receiving_message = RT_FALSE;//重置
+                rx_index = 0;
+            }
+        }
+    }
     return RT_EOK;
 }
 
@@ -68,6 +128,10 @@ void Arm_Init(void)
     }
 
     serial_k230 = rt_device_find(UART1_NAME);
+//    rt_hw_serial_register(&serial_k230,
+//                          UART1_NAME,
+//                          RT_DEVICE_FLAG_RDWR | RT_DEVICE_FLAG_INT_RX | RT_DEVICE_FLAG_DMA_RX,
+//                          0);
     if(serial_k230 == RT_NULL)
     {
         rt_kprintf("fail to find uart1\n");
@@ -75,9 +139,20 @@ void Arm_Init(void)
     else
     {
         rt_device_control(serial_k230, RT_DEVICE_CTRL_CONFIG, (void*)&uart1_set_parg);
-        rt_device_open(serial_k230, RT_DEVICE_OFLAG_RDWR | RT_DEVICE_FLAG_DMA_RX);
+        rt_device_open(serial_k230, RT_DEVICE_OFLAG_RDWR | RT_DEVICE_FLAG_DMA_RX | RT_DEVICE_FLAG_INT_RX);
         rt_device_set_rx_indicate(serial_k230, uart1_rx_irq);
     }
+
+    bus_servo_control(1, 900, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(2, 2048, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(3, 2048, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(4, 3500, 1500);
+    rt_thread_mdelay(1000);
+    bus_servo_control(6, 3000, 1500);
+    rt_thread_mdelay(1000);
 }
 
 /* 控制总线舵机，
@@ -248,7 +323,7 @@ void bus_servo_uart_recv(uint8_t Rx_Temp)
             break;
     }
 }
-
+//固定动作 text
 void arm_fixed_execution(void)
 {
     rt_sem_take(arm_sem, RT_WAITING_FOREVER);
@@ -278,23 +353,98 @@ void arm_fixed_execution(void)
     rt_sem_release(arm_sem);
 }
 
+void arm_vision_control(uint8_t delta_x, uint8_t delta_y, uint8_t delta_size)
+{
+//    //左右移动
+//    servo_value[0] -= delta_x;
+//    bus_servo_control(1, servo_value[0], 1500);
+//    //上下移动
+//    servo_value[3] -= delta_y;
+//    bus_servo_control(4, servo_value[3], 1500);
+//    //靠近
+//    servo_value[1] -= delta_size;
+//    bus_servo_control(2, servo_value[1], 1500);
+//
+//    if(delta_size < 10)//足够靠近
+//    {
+//        bus_servo_control(6, 3000, 1500);
+//    }
+    if(abs(delta_x) > 20)
+    {
+        //水平方向调整
+        int16_t x_adjustment = delta_x / 10;
+
+        if(x_adjustment > 20) x_adjustment = 20;
+        if(x_adjustment < -20) x_adjustment = -20;
+
+        servo_value[0] += x_adjustment;
+        bus_servo_control(1, servo_value[0], 1500);
+//        bus_servo_read(1);
+//        if(get_Rx_state())
+//        {
+//            uint16_t current_pos = bus_servo_get_value();
+//
+//            uint16_t new_pow = current_pos - x_adjustment;
+//
+//            bus_servo_control(1, new_pow, 1500);
+//        }
+
+    }
+
+    if(abs(delta_y) > 20)
+    {
+        int16_t y_adjustment = delta_y / 10;
+
+        if(y_adjustment > 20) y_adjustment = 20;
+        if(y_adjustment < -20) y_adjustment = -20;
+
+        servo_value[3] -= y_adjustment;
+        bus_servo_control(4, servo_value[3], 1500);
+//        bus_servo_read(4);
+//        if(get_Rx_state())
+//        {
+//            uint16_t current_pos = bus_servo_get_value();
+//
+//            uint16_t new_pow = current_pos - y_adjustment;
+//
+//            bus_servo_control(4, new_pow, 1500);
+//        }
+    }
+
+}
+
+//机械臂控制线程
 void arm_control_thread(void* arg)
 {   //控制2 3 4 6舵机
     uint8_t flag = 0;
+    vision_data_t data;
     serial_mutex = rt_mutex_create("serial_mutex", RT_IPC_FLAG_FIFO);//串口互斥锁
     arm_sem = rt_sem_create("arm_sem", 1, RT_IPC_FLAG_FIFO);
     Arm_Init();
+    rt_thread_mdelay(10);
 
     while(1)
     {
-        if(flag == 0)
+//
+//        if(flag == 0)
+//        {
+//            arm_fixed_execution();
+//            flag = 1;
+//        }
+//        bus_servo_control(2, 2048, 1000);
+//        rt_thread_mdelay(1000);
+//        bus_servo_control(6, 3000, 1000);
+//        arm_vision_control(delta_x, delta_y, delta_size);
+//        rt_device_write(serial_k230, 0, "uart1", sizeof("uart1"));
+        if(vision_data.updated)
         {
-            arm_fixed_execution();
-            flag = 1;
+            data = vision_data;
+
+            vision_data.updated = RT_FALSE;
+
+            arm_vision_control(data.delta_x, data.delta_y, data.delta_size);
         }
-        bus_servo_control(2, 2048, 1000);
-        rt_thread_mdelay(1000);
-        bus_servo_control(6, 3000, 1000);
+        rt_thread_mdelay(10);
     }
 
 }

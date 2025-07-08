@@ -10,11 +10,18 @@
 #ifndef APPLICATIONS_ARM_H_
 #define APPLICATIONS_ARM_H_
 
-struct uart_rx_msg
-{
-    rt_device_t dev;
-    rt_size_t size;
-};
+typedef struct {
+    int16_t delta_x;// 与画面中心的水平偏差
+    int16_t delta_y;// 与画面中心的垂直偏差
+    int32_t delta_size;// 与目标尺寸的差值
+    rt_bool_t updated; // 指示数据是否更新
+}vision_data_t;
+
+// 接收状态机状态
+typedef enum {
+    WAIT_HEADER,
+    COLLECT_DATA
+} rx_state_t;
 
 void Arm_Init(void);
 
