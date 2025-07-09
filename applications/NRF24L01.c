@@ -186,19 +186,18 @@ void nrf_com_thread(void* arg)
     NRF24L01_init();
     while(1)
     {
-        if(R_IRQ() == 0) {
+        if(R_IRQ() == 0)
+        {
             nrf_receive(buf);
-            if(buf[3] == 0x01)
-            {
-                rt_mq_send(nrf_arm_queue, buf[3], sizeof(uint8_t));
-            }
         }
-        else {
+        else
+        {
             buf[0] = 0;
             buf[1] = 0;
             buf[2] = 0;
         }
         rt_mq_send(nrf_data_queue, buf, sizeof(buf));
+        rt_mq_send(nrf_arm_queue, buf, sizeof(buf));
         rt_thread_mdelay(10);
     }
 }

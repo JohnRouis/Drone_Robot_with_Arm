@@ -26,8 +26,7 @@
 rt_device_t serial_k230;//串口设备k230
 
 rt_device_t serial_arm;//机械臂串口设备
-rt_mutex_t serial_mutex;//串口互斥锁
-rt_sem_t arm_sem;//机械臂信号量 保证执行任务不被打断
+
 //机械臂收集数据相关
 uint8_t Rx_Data[64] = {0};
 uint8_t Rx_index = 0;
@@ -156,7 +155,7 @@ void bus_servo_control(uint8_t id, uint16_t value, uint16_t time)
 {
     if (value >= 96 && value <= 4000)
     {
-        rt_mutex_take(serial_mutex, RT_WAITING_FOREVER);
+
 
         const uint8_t s_id = id & 0xff;
         const uint8_t len = 0x07;
@@ -186,7 +185,7 @@ void bus_servo_control(uint8_t id, uint16_t value, uint16_t time)
 
         rt_device_write(serial_arm, 0, data, 11);
 
-        rt_mutex_release(serial_mutex);
+
     }
 }
 
@@ -318,7 +317,7 @@ void bus_servo_uart_recv(uint8_t Rx_Temp)
 //固定动作 text
 void arm_fixed_execution(void)
 {
-    rt_sem_take(arm_sem, RT_WAITING_FOREVER);
+
     //机械臂固定执行
     //先立起来
     bus_servo_control(2, 2048, 1500);
@@ -342,17 +341,17 @@ void arm_fixed_execution(void)
     bus_servo_control(6, 3000, 1000);
     rt_thread_mdelay(1000);
     bus_servo_control(2, 2048, 1000);
-    rt_sem_release(arm_sem);
+
 }
 
 //机械臂控制线程
 void arm_control_thread(void* arg)
 {
-    uint8_t arm_buf[8];
+    uint8_t arm_buf[32] = {0};
     uint8_t flag1 = 0, flag2 = 0;
     extern rt_mq_t nrf_arm_queue;
-    serial_mutex = rt_mutex_create("serial_mutex", RT_IPC_FLAG_FIFO);//串口互斥锁
-    arm_sem = rt_sem_create("arm_sem", 1, RT_IPC_FLAG_FIFO);
+
+
     Arm_Init();
     rt_thread_mdelay(10);
 
@@ -360,15 +359,15 @@ void arm_control_thread(void* arg)
     {  //收取nrf执行机械臂任务信号
         rt_size_t size = rt_mq_recv(nrf_arm_queue, arm_buf, sizeof(arm_buf), 10);
         //执行机械臂夹取任务
-        if(size > 0 && arm_buf[0] == 0x01)
+//        rt_device_write(serial_arm, 0, rx_buffer, sizeof(rx_buffer));
+        if(size > 0 && arm_buf[3] != 0 && flag1 == 0)//识别到一次就执行
         {
             flag1 = 1;
-            flag2 = 1;
         }
 
         if(flag1)
         {
-            if(flag2)
+            if(flag2 == 0)
             {
                 //初始化手臂位置
                 for(int i = 5; i >= 0; i--)
@@ -376,34 +375,38 @@ void arm_control_thread(void* arg)
                     bus_servo_control(i + 1, servo_value[i], 1500);
                     rt_thread_mdelay(1000);
                 }
-                flag2 = 0;//退出
+                flag2++;//退出
+                flag1++;
             }
             //校准流程
-            if(vision_data.updated)
+            if(flag1 == 2)
             {
                if(vision_data.delta_x > 5)
                {
                    servo_value[0]+=3;
                    bus_servo_control(1, servo_value[0], 50);
+
                }
                else if(vision_data.delta_x < -5)
                {
                    servo_value[0]-=3;
                    bus_servo_control(1, servo_value[0], 50);
+
                }
-               vision_data.delta_x = 0;
+
                rt_thread_mdelay(100);
                if(vision_data.delta_y > 5)
                {
                    servo_value[3]-=5;
                    bus_servo_control(4, servo_value[3], 50);
+
                }
                else if(vision_data.delta_y < -5)
                {
                    servo_value[3]+=5;
                    bus_servo_control(4, servo_value[3], 50);
+
                }
-               vision_data.delta_y = 0;
 
                vision_data.updated = RT_FALSE;//已经使用需要重新赋值
                //对准了，开始夹取
@@ -414,7 +417,7 @@ void arm_control_thread(void* arg)
                }
             }
             //探头夹取
-            if(flag1 == 2)
+            if(flag1 == 3)
             {
                 servo_value[2] = 2048;//3号伸直
                 bus_servo_control(3, servo_value[2], 1500);
@@ -431,7 +434,7 @@ void arm_control_thread(void* arg)
                 flag1++;
             }
             //举起
-            if(flag1 == 3)
+            if(flag1 == 4)
             {
                 servo_value[1] = 2048;
                 bus_servo_control(2, servo_value[1], 2000);

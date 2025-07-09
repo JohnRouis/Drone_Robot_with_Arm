@@ -27,7 +27,7 @@ int main(void)
     //消息队列
     nrf_data_queue = rt_mq_create("nrf_queue", sizeof(uint8_t)*32, 10, RT_IPC_FLAG_FIFO);
     //发送提醒机械臂任务执行
-    nrf_arm_queue = rt_mq_create("nrf_arm_queue", sizeof(uint8_t)*1, 10, RT_IPC_FLAG_FIFO);
+    nrf_arm_queue = rt_mq_create("nrf_arm_queue", sizeof(uint8_t)*32, 10, RT_IPC_FLAG_FIFO);
 
     //电机控制线程
     rt_thread_t control_thread = rt_thread_create("motor_ctrl", motor_control_thread, RT_NULL, 1024, 2, 10);
