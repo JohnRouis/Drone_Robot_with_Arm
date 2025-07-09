@@ -29,7 +29,7 @@ rt_device_t serial_arm;//机械臂串口设备
 rt_mutex_t serial_mutex;//串口互斥锁
 rt_sem_t arm_sem;//机械臂信号量 保证执行任务不被打断
 //机械臂收集数据相关
-uint8_t Rx_Data[24] = {0};
+uint8_t Rx_Data[64] = {0};
 uint8_t Rx_index = 0;
 uint8_t Rx_Flag = 0;
 uint8_t RecvFlag = 0;
@@ -40,7 +40,7 @@ uint8_t delta_y = 0;//y轴差距
 uint8_t delta_size = 0;//大小差距
 
 uint8_t arm_ids[6] = {1, 2, 3, 4, 5, 6};//舵机ID号
-uint16_t servo_value[6] = {900, 2048, 2048, 3500, 2048, 1500};//记录舵机当前位置
+uint16_t servo_value[6] = {2048, 2048, 2048, 3500, 1500, 1500};//记录舵机当前位置
 
 //画面中心点
 int16_t center_x = 160;
@@ -58,14 +58,13 @@ static rt_bool_t receiving_message = RT_FALSE;
 /* 串口中断接收数据 */
 rt_err_t rx_irq(rt_device_t dev,rt_size_t size)
 {
-//    rt_size_t len;
     uint8_t temp;
     if(rt_device_read(serial_arm, 0, &temp, 1))
     {
         bus_servo_uart_recv(temp);
     }
 
-    return 0;
+    return RT_EOK;
 }
 
 //K230相关数据接收
@@ -95,11 +94,12 @@ rt_err_t uart1_rx_irq(rt_device_t dev, rt_size_t size)
             if (temp == '@')
             {
                 rt_device_write(serial_arm, 0, rx_buffer , sizeof(rx_buffer));
-                int16_t temp_x = rx_buffer[1] - '0' * 100 + rx_buffer[2] - '0' * 10 + rx_buffer[3] - '0';
-                int16_t temp_y = rx_buffer[5] - '0' * 100 + rx_buffer[6] - '0' * 10 + rx_buffer[7] - '0';
+                int16_t temp_x = (rx_buffer[1] - '0') * 100 + (rx_buffer[2] - '0') * 10 + rx_buffer[3] - '0';
+                int16_t temp_y = (rx_buffer[5] - '0') * 100 + (rx_buffer[6] - '0') * 10 + rx_buffer[7] - '0';
 
                 vision_data.delta_x = center_x - temp_x;
                 vision_data.delta_y = center_y - temp_y;
+                vision_data.updated = RT_TRUE;
 
                 receiving_message = RT_FALSE;//重置
                 rx_index = 0;
@@ -138,16 +138,12 @@ void Arm_Init(void)
         rt_device_set_rx_indicate(serial_k230, uart1_rx_irq);
     }
 
-    bus_servo_control(1, 900, 1500);
-    rt_thread_mdelay(1000);
-    bus_servo_control(2, 2048, 1500);
-    rt_thread_mdelay(1000);
-    bus_servo_control(3, 2048, 1500);
-    rt_thread_mdelay(1000);
-    bus_servo_control(4, 3500, 1500);
-    rt_thread_mdelay(1000);
-    bus_servo_control(6, 3000, 1500);
-    rt_thread_mdelay(1000);
+
+    for(int i = 0; i < 6; i++)
+    {
+        bus_servo_control(i + 1, servo_value[i], 1500);
+        rt_thread_mdelay(1000);
+    }
 }
 
 /* 控制总线舵机，
@@ -373,19 +369,28 @@ void arm_vision_control(int16_t delta_x, int16_t delta_y, int16_t delta_size)
         if(x_adjustment < -20) x_adjustment = -20;
 
         servo_value[0] -= x_adjustment;
-        bus_servo_control(1, servo_value[0], 1500);
+        servo_value[0] = (4096 + servo_value[0]) % 4096;
+        bus_servo_control(1, servo_value[0], 2000);
+        rt_thread_mdelay(1000);
+
 //        bus_servo_read(1);
 //        rt_thread_mdelay(10);
 //        if(get_Rx_state())
 //        {
 //            uint16_t current_pos = bus_servo_get_value();
 //
-//            uint16_t new_pow = current_pos + x_adjustment;
+//            uint16_t new_pow = current_pos - x_adjustment;
 //
-//            bus_servo_control(1, new_pow, 1500);
+//            bus_servo_control(1, new_pow, 1000);
+//
+//            rt_thread_mdelay(1000);
+//
+//
 //        }
-
+//
     }
+
+//    rt_thread_mdelay(1000);
 
 //    if(abs(delta_y) > 20)
 //    {
@@ -393,20 +398,23 @@ void arm_vision_control(int16_t delta_x, int16_t delta_y, int16_t delta_size)
 //
 //        if(y_adjustment > 20) y_adjustment = 20;
 //        if(y_adjustment < -20) y_adjustment = -20;
+////
+////        servo_value[3] -= y_adjustment;
+////        bus_servo_control(4, servo_value[3], 1500);
 //
-//        servo_value[3] -= y_adjustment;
-//        bus_servo_control(4, servo_value[3], 1500);
-
-
+//
 //        bus_servo_read(4);
 //        rt_thread_mdelay(10);
 //        if(get_Rx_state())
 //        {
 //            uint16_t current_pos = bus_servo_get_value();
 //
-//            uint16_t new_pow = current_pos - y_adjustment;
+//            uint16_t new_pow = current_pos + y_adjustment;
 //
-//            bus_servo_control(4, new_pow, 1500);
+//            bus_servo_control(4, new_pow, 1000);
+//
+//            rt_thread_mdelay(1000);
+//
 //        }
 //    }
 
@@ -417,7 +425,7 @@ void arm_vision_control(int16_t delta_x, int16_t delta_y, int16_t delta_size)
 //机械臂控制线程
 void arm_control_thread(void* arg)
 {   //控制2 3 4 6舵机
-    uint8_t flag = 0;
+    int16_t flag = 0;
     vision_data_t data;
     serial_mutex = rt_mutex_create("serial_mutex", RT_IPC_FLAG_FIFO);//串口互斥锁
     arm_sem = rt_sem_create("arm_sem", 1, RT_IPC_FLAG_FIFO);
@@ -426,31 +434,39 @@ void arm_control_thread(void* arg)
 
     while(1)
     {
-//
-//        if(flag == 0)
-//        {
-//            arm_fixed_execution();
-//            flag = 1;
-//        }
-//        bus_servo_control(2, 2048, 1000);
-//        rt_thread_mdelay(1000);
-//        bus_servo_control(6, 3000, 1000);
-//        arm_vision_control(delta_x, delta_y, delta_size);
-//        rt_device_write(serial_k230, 0, "uart1", sizeof("uart1"));
+        if(vision_data.updated)
+        {
+            if(vision_data.delta_x > 20)
+            {
+                servo_value[0]+=10;
+                bus_servo_control(1, servo_value[0], 900);
+            }
+            else if(vision_data.delta_x < -20)
+            {
+                servo_value[0]-=10;
+                bus_servo_control(1, servo_value[0], 900);
+            }
+            vision_data.delta_x = 0;
+            rt_thread_mdelay(100);
+            if(vision_data.delta_y > 20)
+            {
+                servo_value[3]-=5;
+                bus_servo_control(4, servo_value[3], 900);
+            }
+            else if(vision_data.delta_y < -20)
+            {
+                servo_value[3]+=5;
+                bus_servo_control(4, servo_value[3], 900);
+            }
+            vision_data.delta_y = 0;
 
-
-
-//        if(vision_data.updated)
-//        {
-            data = vision_data;
-
-            vision_data.updated = RT_FALSE;//更新标志位
-
-            arm_vision_control(data.delta_x, data.delta_y, data.delta_size);
-
-
-//        }
-        rt_thread_mdelay(10);
+            vision_data.updated = RT_FALSE;//已经使用需要重新赋值
+        }
+        //实验：
+//        bus_servo_control(1, flag, 1000);
+//        flag += 1;
+//        if(flag >= 4000) flag = 4000;
+        rt_thread_mdelay(100);
     }
 
 }
