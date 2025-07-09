@@ -181,12 +181,17 @@ uint8_t nrf_send(uint8_t* Buf)
 void nrf_com_thread(void* arg)
 {
     extern rt_mq_t nrf_data_queue;
+    extern rt_mq_t nrf_arm_queue;
     uint8_t buf[32]={0};
     NRF24L01_init();
     while(1)
     {
         if(R_IRQ() == 0) {
             nrf_receive(buf);
+            if(buf[3] == 0x01)
+            {
+                rt_mq_send(nrf_arm_queue, buf[3], sizeof(uint8_t));
+            }
         }
         else {
             buf[0] = 0;

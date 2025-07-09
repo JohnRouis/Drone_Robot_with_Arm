@@ -41,7 +41,7 @@ uint8_t delta_size = 0;//大小差距
 
 uint8_t arm_ids[6] = {1, 2, 3, 4, 5, 6};//舵机ID号
 //开始执行夹去任务
-uint16_t servo_value[6] = {2048, 2048, 2048, 3500, 1500, 1500};//记录舵机当前位置
+uint16_t servo_value[6] = {2048, 2048, 3000, 3000, 1500, 1200};//记录舵机当前位置
 uint16_t servo_init_value[6] = {2048, 2048, 3072, 3072, 1500, 1200};//初始化使用
 //画面中心点
 int16_t center_x = 160;
@@ -345,128 +345,99 @@ void arm_fixed_execution(void)
     rt_sem_release(arm_sem);
 }
 
-void arm_vision_control(int16_t delta_x, int16_t delta_y, int16_t delta_size)
-{
-//    //左右移动
-//    servo_value[0] -= delta_x;
-//    bus_servo_control(1, servo_value[0], 1500);
-//    //上下移动
-//    servo_value[3] -= delta_y;
-//    bus_servo_control(4, servo_value[3], 1500);
-//    //靠近
-//    servo_value[1] -= delta_size;
-//    bus_servo_control(2, servo_value[1], 1500);
-//
-//    if(delta_size < 10)//足够靠近
-//    {
-//        bus_servo_control(6, 3000, 1500);
-//    }
-    if(abs(delta_x) > 20)
-    {
-        //水平方向调整
-        int16_t x_adjustment = delta_x / 10;
-
-        if(x_adjustment > 20) x_adjustment = 20;
-        if(x_adjustment < -20) x_adjustment = -20;
-
-        servo_value[0] -= x_adjustment;
-        servo_value[0] = (4096 + servo_value[0]) % 4096;
-        bus_servo_control(1, servo_value[0], 2000);
-        rt_thread_mdelay(1000);
-
-//        bus_servo_read(1);
-//        rt_thread_mdelay(10);
-//        if(get_Rx_state())
-//        {
-//            uint16_t current_pos = bus_servo_get_value();
-//
-//            uint16_t new_pow = current_pos - x_adjustment;
-//
-//            bus_servo_control(1, new_pow, 1000);
-//
-//            rt_thread_mdelay(1000);
-//
-//
-//        }
-//
-    }
-
-//    rt_thread_mdelay(1000);
-
-//    if(abs(delta_y) > 20)
-//    {
-//        int16_t y_adjustment = delta_y / 10;
-//
-//        if(y_adjustment > 20) y_adjustment = 20;
-//        if(y_adjustment < -20) y_adjustment = -20;
-////
-////        servo_value[3] -= y_adjustment;
-////        bus_servo_control(4, servo_value[3], 1500);
-//
-//
-//        bus_servo_read(4);
-//        rt_thread_mdelay(10);
-//        if(get_Rx_state())
-//        {
-//            uint16_t current_pos = bus_servo_get_value();
-//
-//            uint16_t new_pow = current_pos + y_adjustment;
-//
-//            bus_servo_control(4, new_pow, 1000);
-//
-//            rt_thread_mdelay(1000);
-//
-//        }
-//    }
-
-    vision_data.delta_x = 0;//串口不更新了就停止
-    vision_data.delta_y = 0;
-}
-
 //机械臂控制线程
 void arm_control_thread(void* arg)
-{   //控制2 3 4 6舵机
-    int16_t flag = 0;
-    vision_data_t data;
+{
+    uint8_t arm_buf[8];
+    uint8_t flag1 = 0, flag2 = 0;
+    extern rt_mq_t nrf_arm_queue;
     serial_mutex = rt_mutex_create("serial_mutex", RT_IPC_FLAG_FIFO);//串口互斥锁
     arm_sem = rt_sem_create("arm_sem", 1, RT_IPC_FLAG_FIFO);
     Arm_Init();
     rt_thread_mdelay(10);
 
     while(1)
-    {
-//        if(vision_data.updated)
-//        {
-//            if(vision_data.delta_x > 20)
-//            {
-//                servo_value[0]+=10;
-//                bus_servo_control(1, servo_value[0], 900);
-//            }
-//            else if(vision_data.delta_x < -20)
-//            {
-//                servo_value[0]-=10;
-//                bus_servo_control(1, servo_value[0], 900);
-//            }
-//            vision_data.delta_x = 0;
-//            rt_thread_mdelay(100);
-//            if(vision_data.delta_y > 20)
-//            {
-//                servo_value[3]-=5;
-//                bus_servo_control(4, servo_value[3], 900);
-//            }
-//            else if(vision_data.delta_y < -20)
-//            {
-//                servo_value[3]+=5;
-//                bus_servo_control(4, servo_value[3], 900);
-//            }
-//            vision_data.delta_y = 0;
-//
-//            vision_data.updated = RT_FALSE;//已经使用需要重新赋值
-//        }
-        //实验：
-//        bus_servo_control(1, flag, 1000);
-//        flag += 1;
-//        if(flag >= 4000) flag = 4000;
+    {  //收取nrf执行机械臂任务信号
+        rt_size_t size = rt_mq_recv(nrf_arm_queue, arm_buf, sizeof(arm_buf), 10);
+        //执行机械臂夹取任务
+        if(size > 0 && arm_buf[0] == 0x01)
+        {
+            flag1 = 1;
+            flag2 = 1;
+        }
+
+        if(flag1)
+        {
+            if(flag2)
+            {
+                //初始化手臂位置
+                for(int i = 5; i >= 0; i--)
+                {
+                    bus_servo_control(i + 1, servo_value[i], 1500);
+                    rt_thread_mdelay(1000);
+                }
+                flag2 = 0;//退出
+            }
+            //校准流程
+            if(vision_data.updated)
+            {
+               if(vision_data.delta_x > 5)
+               {
+                   servo_value[0]+=3;
+                   bus_servo_control(1, servo_value[0], 50);
+               }
+               else if(vision_data.delta_x < -5)
+               {
+                   servo_value[0]-=3;
+                   bus_servo_control(1, servo_value[0], 50);
+               }
+               vision_data.delta_x = 0;
+               rt_thread_mdelay(100);
+               if(vision_data.delta_y > 5)
+               {
+                   servo_value[3]-=5;
+                   bus_servo_control(4, servo_value[3], 50);
+               }
+               else if(vision_data.delta_y < -5)
+               {
+                   servo_value[3]+=5;
+                   bus_servo_control(4, servo_value[3], 50);
+               }
+               vision_data.delta_y = 0;
+
+               vision_data.updated = RT_FALSE;//已经使用需要重新赋值
+               //对准了，开始夹取
+               if((vision_data.delta_x >= -5 && vision_data.delta_x <= 5) &&
+                   (vision_data.delta_y >= -5 && vision_data.delta_y <= 5))
+               {
+                   flag1++;
+               }
+            }
+            //探头夹取
+            if(flag1 == 2)
+            {
+                servo_value[2] = 2048;//3号伸直
+                bus_servo_control(3, servo_value[2], 1500);
+                rt_thread_mdelay(3000);
+
+                servo_value[3] = 2700;//4号
+                bus_servo_control(4, servo_value[3], 1000);
+                rt_thread_mdelay(3000);
+
+                servo_value[1] = 3200;//2号往下探
+                bus_servo_control(2, servo_value[1], 1000);
+                rt_thread_mdelay(3000);
+
+                flag1++;
+            }
+            //举起
+            if(flag1 == 3)
+            {
+                servo_value[1] = 2048;
+                bus_servo_control(2, servo_value[1], 2000);
+                flag1 = 0;//退出任务
+            }
+        }
         rt_thread_mdelay(100);
     }
 
