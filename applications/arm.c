@@ -40,8 +40,9 @@ uint8_t delta_y = 0;//y轴差距
 uint8_t delta_size = 0;//大小差距
 
 uint8_t arm_ids[6] = {1, 2, 3, 4, 5, 6};//舵机ID号
+//开始执行夹去任务
 uint16_t servo_value[6] = {2048, 2048, 2048, 3500, 1500, 1500};//记录舵机当前位置
-
+uint16_t servo_init_value[6] = {2048, 2048, 3072, 3072, 1500, 1200};//初始化使用
 //画面中心点
 int16_t center_x = 160;
 int16_t center_y = 120;
@@ -141,7 +142,7 @@ void Arm_Init(void)
 
     for(int i = 0; i < 6; i++)
     {
-        bus_servo_control(i + 1, servo_value[i], 1500);
+        bus_servo_control(i + 1, servo_init_value[i], 1500);
         rt_thread_mdelay(1000);
     }
 }
@@ -434,34 +435,34 @@ void arm_control_thread(void* arg)
 
     while(1)
     {
-        if(vision_data.updated)
-        {
-            if(vision_data.delta_x > 20)
-            {
-                servo_value[0]+=10;
-                bus_servo_control(1, servo_value[0], 900);
-            }
-            else if(vision_data.delta_x < -20)
-            {
-                servo_value[0]-=10;
-                bus_servo_control(1, servo_value[0], 900);
-            }
-            vision_data.delta_x = 0;
-            rt_thread_mdelay(100);
-            if(vision_data.delta_y > 20)
-            {
-                servo_value[3]-=5;
-                bus_servo_control(4, servo_value[3], 900);
-            }
-            else if(vision_data.delta_y < -20)
-            {
-                servo_value[3]+=5;
-                bus_servo_control(4, servo_value[3], 900);
-            }
-            vision_data.delta_y = 0;
-
-            vision_data.updated = RT_FALSE;//已经使用需要重新赋值
-        }
+//        if(vision_data.updated)
+//        {
+//            if(vision_data.delta_x > 20)
+//            {
+//                servo_value[0]+=10;
+//                bus_servo_control(1, servo_value[0], 900);
+//            }
+//            else if(vision_data.delta_x < -20)
+//            {
+//                servo_value[0]-=10;
+//                bus_servo_control(1, servo_value[0], 900);
+//            }
+//            vision_data.delta_x = 0;
+//            rt_thread_mdelay(100);
+//            if(vision_data.delta_y > 20)
+//            {
+//                servo_value[3]-=5;
+//                bus_servo_control(4, servo_value[3], 900);
+//            }
+//            else if(vision_data.delta_y < -20)
+//            {
+//                servo_value[3]+=5;
+//                bus_servo_control(4, servo_value[3], 900);
+//            }
+//            vision_data.delta_y = 0;
+//
+//            vision_data.updated = RT_FALSE;//已经使用需要重新赋值
+//        }
         //实验：
 //        bus_servo_control(1, flag, 1000);
 //        flag += 1;
