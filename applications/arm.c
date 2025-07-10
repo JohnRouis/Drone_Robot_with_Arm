@@ -16,6 +16,8 @@
 #include "board.h"
 #include "usart.h"
 #include "gpio.h"
+#include "NRF24L01.h"
+#include "motor.h"
 
 #define UART3_NAME   "uart3"
 #define UART1_NAME   "uart1"
@@ -344,6 +346,20 @@ void arm_fixed_execution(void)
 
 }
 
+
+void servo_delay(void)
+{
+    for(int i = 0; i < 3000; i++)
+    {
+        for(int j = 0; j < 4000; j++);
+    }
+}
+
+void servo_delay_ms(int ms)
+{
+    for(int i = 0; i < ms; i++);
+}
+
 //机械臂控制线程
 void arm_control_thread(void* arg)
 {
@@ -363,6 +379,8 @@ void arm_control_thread(void* arg)
         if(size > 0 && arm_buf[3] != 0 && flag1 == 0)//识别到一次就执行
         {
             flag1 = 1;
+//            rt_thread_delete(nrf_com_thread);
+//            rt_thread_delete(motor_control_thread);
         }
 
         if(flag1)
@@ -372,40 +390,41 @@ void arm_control_thread(void* arg)
                 //初始化手臂位置
                 for(int i = 5; i >= 0; i--)
                 {
-                    bus_servo_control(i + 1, servo_value[i], 1500);
-                    rt_thread_mdelay(1000);
+                    bus_servo_control(i + 1, servo_value[i], 2000);
+                    servo_delay_ms(1000);
+                    //rt_thread_mdelay(10);
                 }
                 flag2++;//退出
                 flag1++;
             }
             //校准流程
-            if(flag1 == 2)
+            if(flag1 == 2 && vision_data.updated)
             {
                if(vision_data.delta_x > 5)
                {
                    servo_value[0]+=3;
-                   bus_servo_control(1, servo_value[0], 50);
-
+                   bus_servo_control(1, servo_value[0], 2000);
+                   servo_delay_ms(1500);
                }
                else if(vision_data.delta_x < -5)
                {
                    servo_value[0]-=3;
-                   bus_servo_control(1, servo_value[0], 50);
-
+                   bus_servo_control(1, servo_value[0], 2000);
+                   servo_delay_ms(1500);
                }
 
-               rt_thread_mdelay(100);
+               //rt_thread_mdelay(100);
                if(vision_data.delta_y > 5)
                {
                    servo_value[3]-=5;
-                   bus_servo_control(4, servo_value[3], 50);
-
+                   bus_servo_control(4, servo_value[3], 2000);
+                   servo_delay_ms(1500);
                }
                else if(vision_data.delta_y < -5)
                {
                    servo_value[3]+=5;
-                   bus_servo_control(4, servo_value[3], 50);
-
+                   bus_servo_control(4, servo_value[3], 2000);
+                   servo_delay_ms(1500);
                }
 
                vision_data.updated = RT_FALSE;//已经使用需要重新赋值
@@ -419,29 +438,33 @@ void arm_control_thread(void* arg)
             //探头夹取
             if(flag1 == 3)
             {
-                servo_value[2] = 2048;//3号伸直
-                bus_servo_control(3, servo_value[2], 1500);
-                rt_thread_mdelay(3000);
+
+
+
 
                 servo_value[3] = 2700;//4号
-                bus_servo_control(4, servo_value[3], 1000);
-                rt_thread_mdelay(3000);
+                bus_servo_control(4, servo_value[3], 2000);
+                servo_delay_ms(3000);
+
+                servo_value[2] = 2048;//3号伸直
+                bus_servo_control(3, servo_value[2], 2000);
+                servo_delay_ms(3000);
 
                 servo_value[1] = 3200;//2号往下探
                 bus_servo_control(2, servo_value[1], 1000);
-                rt_thread_mdelay(3000);
-
+                servo_delay_ms(3000);
                 flag1++;
             }
             //举起
             if(flag1 == 4)
             {
-                servo_value[1] = 2048;
-                bus_servo_control(2, servo_value[1], 2000);
+                servo_value[0] = 1500;
+                bus_servo_control(1, servo_value[0], 2000);
+                servo_delay_ms(2000);
                 flag1 = 0;//退出任务
             }
         }
-        rt_thread_mdelay(100);
+        rt_thread_mdelay(10);
     }
 
 }

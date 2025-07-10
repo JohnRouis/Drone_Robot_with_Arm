@@ -14,6 +14,7 @@
 #include "drv_common.h"
 #include <stdlib.h>
 #include <rtdbg.h>
+#include "arm.h"
 
 uint8_t T_ADDR[5]={0xF0,0xF0,0xF0,0xF0,0xF0};
 uint8_t R_ADDR[5]={0xF0,0xF0,0xF0,0xF0,0xF0};
@@ -184,6 +185,11 @@ void nrf_com_thread(void* arg)
     extern rt_mq_t nrf_arm_queue;
     uint8_t buf[32]={0};
     NRF24L01_init();
+    Arm_Init();
+
+    extern uint16_t servo_value[6];
+    extern vision_data_t vision_data;
+    uint8_t flag1 = 0, flag2 = 0;
     while(1)
     {
         if(R_IRQ() == 0)
@@ -197,7 +203,90 @@ void nrf_com_thread(void* arg)
             buf[2] = 0;
         }
         rt_mq_send(nrf_data_queue, buf, sizeof(buf));
-        rt_mq_send(nrf_arm_queue, buf, sizeof(buf));
+
+        if(buf[3] != 0 && flag1 == 0)//识别到一次就执行
+                {
+                    flag1 = 1;
+                }
+
+                if(flag1)
+                {
+                    if(flag2 == 0)
+                    {
+                        //初始化手臂位置
+                        for(int i = 5; i >= 0; i--)
+                        {
+                            bus_servo_control(i + 1, servo_value[i], 1500);
+                            rt_thread_mdelay(1000);
+                        }
+                        flag2++;//退出
+                        flag1++;
+                    }
+                    //校准流程
+                    if(flag1 == 2)
+                    {
+                       if(vision_data.delta_x > 5)
+                       {
+                           servo_value[0]+=3;
+                           bus_servo_control(1, servo_value[0], 50);
+
+                       }
+                       else if(vision_data.delta_x < -5)
+                       {
+                           servo_value[0]-=3;
+                           bus_servo_control(1, servo_value[0], 50);
+
+                       }
+
+                       rt_thread_mdelay(100);
+                       if(vision_data.delta_y > 5)
+                       {
+                           servo_value[3]-=5;
+                           bus_servo_control(4, servo_value[3], 50);
+
+                       }
+                       else if(vision_data.delta_y < -5)
+                       {
+                           servo_value[3]+=5;
+                           bus_servo_control(4, servo_value[3], 50);
+
+                       }
+
+                       vision_data.updated = RT_FALSE;//已经使用需要重新赋值
+                       //对准了，开始夹取
+                       if((vision_data.delta_x >= -5 && vision_data.delta_x <= 5) &&
+                           (vision_data.delta_y >= -5 && vision_data.delta_y <= 5))
+                       {
+                           flag1++;
+                       }
+                    }
+                    //探头夹取
+                    if(flag1 == 3)
+                    {
+                        servo_value[2] = 2048;//3号伸直
+                        bus_servo_control(3, servo_value[2], 1500);
+                        rt_thread_mdelay(3000);
+
+                        servo_value[3] = 2700;//4号
+                        bus_servo_control(4, servo_value[3], 1000);
+                        rt_thread_mdelay(3000);
+
+                        servo_value[1] = 3200;//2号往下探
+                        bus_servo_control(2, servo_value[1], 1000);
+                        rt_thread_mdelay(3000);
+
+                        flag1++;
+                    }
+                    //举起
+                    if(flag1 == 4)
+                    {
+                        servo_value[1] = 2048;
+                        bus_servo_control(2, servo_value[1], 2000);
+                        flag1 = 0;//退出任务
+                    }
+                }
+
+
         rt_thread_mdelay(10);
     }
 }

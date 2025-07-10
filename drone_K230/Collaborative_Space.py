@@ -14,9 +14,8 @@ from NRF24L01 import nrf24l01
 import math
 from PathPlanner import PathPlanner
 
-#nrf通信模块初始化
 nrf = nrf24l01()
-
+###################################变量声明##########################################################
 DISPLAY_WIDTH = 320
 DISPLAY_HEIGHT = 240
 OUT_RGB888P_WIDTH = 320
@@ -26,25 +25,28 @@ root_path="/sdcard/mp_deployment_source/"
 config_path=root_path+"deploy_config.json"
 deploy_conf={}
 debug_mode=1
-boom_X=None
-boom_Y=None
-P_boom=0
-
-car_head_X=None
-car_head_Y=None
-P_car_head=0
-
-car_tail_X=None
-car_tail_Y=None
-P_car_tail=0
-
-green_X = None
-green_Y = None
-
-head_dis = None
-tail_dis = None
-
-
+boom_X=None                 #爆炸物的中心点的X
+boom_Y=None                 #爆炸物的中心点的Y
+car_head_X=None             #车头的中心点的X
+car_head_Y=None             #车头的中心点的Y
+car_tail_X=None             #车尾的中心点的X
+car_tail_Y=None             #车尾的中心点的Y
+green_X = None              #爆炸物（绿色）中心点的X
+green_Y = None              #爆炸物（绿色）中心点的Y
+head_dis = None             #车头与爆炸物的距离
+tail_dis = None             #车尾与爆炸物的距离
+P_boom=0                    #爆炸物的识别的准确率
+P_car_head=0                #车头识别的准确率
+P_car_tail=0                #车尾识别的准确率
+k_tail = None               #车尾斜率
+k_head = None               #车头斜率
+tail_dis=None               #车尾距离
+head_dis=None               #车头距离
+boom_head_parallel=None     #车头与爆炸物平行标志
+boom_tail_parallel=None     #车尾与爆炸物平行标志
+status_1=None               #平行标志
+stop=None                   #停止标志位
+####################################函数声明#########################################################
 def two_side_pad_param(input_size,output_size):
     ratio_w = output_size[0] / input_size[0]  # 宽度缩放比例
     ratio_h = output_size[1] / input_size[1]   # 高度缩放比例
@@ -58,7 +60,6 @@ def two_side_pad_param(input_size,output_size):
     left = int(round(dw - 0.1))
     right = int(round(dw - 0.1))
     return top, bottom, left, right,ratio
-
 def read_deploy_config(config_path):
     # 打开JSON文件以进行读取deploy_config
     with open(config_path, 'r') as json_file:
@@ -68,7 +69,7 @@ def read_deploy_config(config_path):
         except ValueError as e:
             print("JSON 解析错误:", e)
     return config
-
+###########################################主函数####################################################
 try:
     print("det_infer start")
     # 使用json读取内容初始化部署变量
@@ -135,19 +136,14 @@ try:
     data = np.ones((1,3,kmodel_frame_size[1],kmodel_frame_size[0]),dtype=np.uint8)
     ai2d_output_tensor = nn.from_numpy(data)
     while  True:
-        #模型使用
         with ScopedTiming("total",debug_mode > 0):
             rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)
             if rgb888p_img.format() == image.RGBP888:
                 ai2d_input = rgb888p_img.to_numpy_ref()
                 ai2d_input_tensor = nn.from_numpy(ai2d_input)
-                # 使用ai2d进行预处理
                 ai2d_builder.run(ai2d_input_tensor, ai2d_output_tensor)
-                # 设置模型输入
                 kpu.set_input_tensor(0, ai2d_output_tensor)
-                # 模型推理
                 kpu.run()
-                # 获取模型输出
                 results = []
                 for i in range(kpu.outputs_size()):
                     out_data = kpu.get_output_tensor(i)
@@ -155,9 +151,7 @@ try:
                     result = result.reshape((result.shape[0]*result.shape[1]*result.shape[2]*result.shape[3]))
                     del out_data
                     results.append(result)
-                # 使用aicube模块封装的接口进行后处理
                 det_boxes = aicube.anchorbasedet_post_process( results[0], results[1], results[2], kmodel_frame_size, frame_size, strides, num_classes, confidence_threshold, nms_threshold, anchors, nms_option)
-                # 绘制结果
                 osd_img.clear()
                 P_boom=0
                 P_car_head=0
@@ -186,79 +180,65 @@ try:
                                 boom_head_Y=y+0.5*h
                 gc.collect()
             rgb888p_img = None
-
-        #颜色识别
-        os.exitpoint()
-        # 捕获通道1的图像
+        #os.exitpoint()
         img = sensor.snapshot(chn=CAM_CHN_ID_1)
         img_original = img.copy()
-        #对图像进行二值化处理
         binary_img = img.binary(green_threshold)
-
         binary_img.erode(1)
         binary_img.dilate(3)
-
-
-        #进行腐蚀操作 去除小的噪声点
-        #img.erode(1,green_threshold)
-        #膨胀操作 恢复目标区域的完整性
-        #img.dilate(1,green_threshold)
-
-        #color_threshold 是要寻找的颜色的阈值，area_threshold 表示过滤掉小于此面积的色块
-        #blobs = img.find_blobs(green_threshold,area_threshold = 2000)
         blobs = binary_img.find_blobs(white_threshold, area_threshold = 300, pixels_threshold = 300, merge = True)
         if blobs:
             # 遍历每个检测到的颜色块
             for blob in blobs:
-                # 绘制颜色块的外接矩形
-                # blob[0:4] 表示颜色块的矩形框 [x, y, w, h]，
                 green_w = blob[2]
                 green_h = blob[3]
                 if green_w * green_h > 10:
                     img_original.draw_rectangle(blob[0:4])
-
-                    # 在颜色块的中心绘制一个十字
-                    # blob[5] 和 blob[6] 分别是颜色块的中心坐标 (cx, cy)
                     green_X = blob[5]
                     green_Y = blob[6]
                     print("检测到绿色")
                     img_original.draw_cross(blob[5], blob[6])
+        #debug用的，后续删掉
         if car_head_X!=None and car_head_Y!=None:
             img_original.draw_cross(int(car_head_X),int(car_head_Y),color=(255,0,0),size=10,thicknes=2)
         if car_tail_X!=None and car_tail_Y!=None:
             img_original.draw_cross(int(car_tail_X),int(car_tail_Y),color=(0,255,0),size=10,thicknes=2)
         if boom_X!=None and boom_Y!=None:
             img_original.draw_cross(int(boom_X),int(boom_Y),color=(0,0,255),size=10,thicknes=2)
-        #print(car_head_X,car_head_Y)
         Display.show_image(img_original)
-
-        #车头 车尾到目标的距离
-        if green_X is not None and car_tail_X is not None and (green_X - car_tail_X) != 0:
-            k_tail = (green_Y - car_tail_Y) / (green_X - car_tail_X)
-            tail_dis = math.sqrt((green_Y - car_tail_Y) ** 2 + (green_X - car_tail_X) ** 2)
-        else:
-            k_tail = None
-
-        if green_X is not None and car_head_X is not None and (green_X - car_head_X) != 0:
-            k_head = (green_Y - car_head_Y) / (green_X - car_head_X)
-            head_dis = math.sqrt((green_Y - car_head_Y) ** 2 + (green_X - car_head_X) ** 2)
-        else:
-            k_head = None
-
-        if k_tail is not None and k_head is not None:
-            #print("k_tail:", k_tail)
-            #print("k_head:", k_head)
-            if k_tail - k_head < 0.05 and k_tail - k_head > -0.05 and tail_dis > head_dis:
-                #print("同一直线上")
-                if head_dis > 50:
-                    nrf.Send(bytearray([0x25, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
-                else :
-                    nrf.Send(bytearray([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+        if green_X is not None and car_tail_X is not None:
+            if(green_X - car_tail_X) != 0:
+                k_tail = (green_Y - car_tail_Y) / (green_X - car_tail_X)
+                tail_dis = math.sqrt((green_Y - car_tail_Y) ** 2 + (green_X - car_tail_X) ** 2)
+            elif (green_X - car_tail_X)==0:
+                boom_tail_parallel=1
+        if green_X is not None and car_head_X is not None:
+            if(green_X - car_head_X) != 0:
+                k_head = (green_Y - car_head_Y) / (green_X - car_head_X)
+                head_dis = math.sqrt((green_Y - car_head_Y) ** 2 + (green_X - car_head_X) ** 2)
+            elif (green_X - car_head_X)==0:
+                boom_head_parallel=1
+        if  (status_1!=1)and((boom_head_parallel==1 and boom_tail_parallel==1)or(k_tail is not None and k_head is not None)):
+            if (k_tail - k_head < 0.03 and k_tail - k_head > -0.03)and head_dis < tail_dis:
+                status_1=1
             else :
-                if head_dis > 50:
-                    nrf.Send(bytearray([0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
-                else :
-                    nrf.Send(bytearray([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+                nrf.Send(bytearray([0x00, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+        if status_1==1:
+            if head_dis>50:
+                nrf.Send(bytearray([0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+            else:
+                stop=1
+        if stop==1:
+            while True:
+                nrf.Send(bytearray([0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+            break
+
+        '''car_head_X=None             #车头的中心点的X
+        car_head_Y=None             #车头的中心点的Y
+        car_tail_X=None             #车尾的中心点的X
+        car_tail_Y=None             #车尾的中心点的Y
+        green_X = None              #爆炸物（绿色）中心点的X
+        green_Y = None              #爆炸物（绿色）中心点的Y'''
 ###################################下面是异常处理#####################################################
 except KeyboardInterrupt as e:
     print("用户停止: ", e)

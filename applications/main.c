@@ -30,7 +30,7 @@ int main(void)
     nrf_arm_queue = rt_mq_create("nrf_arm_queue", sizeof(uint8_t)*32, 10, RT_IPC_FLAG_FIFO);
 
     //电机控制线程
-    rt_thread_t control_thread = rt_thread_create("motor_ctrl", motor_control_thread, RT_NULL, 1024, 2, 10);
+    rt_thread_t control_thread = rt_thread_create("motor_ctrl", motor_control_thread, RT_NULL, 1024, 3, 10);
     if (control_thread != RT_NULL)
     {
          rt_thread_startup(control_thread);
@@ -43,12 +43,13 @@ int main(void)
         rt_thread_startup(nrf_thread);
     }
 
-    //机械臂控制线程
-    rt_thread_t arm_thread = rt_thread_create("arm_ctrl", arm_control_thread, RT_NULL, 1024, 3, 10);
-    if(arm_thread != RT_NULL)
-    {
-        rt_thread_startup(arm_thread);
-    }
+//    //机械臂控制线程
+//    rt_thread_t arm_thread = rt_thread_create("arm_ctrl", arm_control_thread, RT_NULL, 1024, 2, 10);
+//    if(arm_thread != RT_NULL)
+//    {
+//        rt_thread_startup(arm_thread);
+//    }
+
 
     return RT_EOK;
 }

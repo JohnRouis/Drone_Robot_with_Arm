@@ -39,4 +39,6 @@ void bus_servo_uart_recv(uint8_t Rx_Temp);
 
 void arm_control_thread(void* arg);//机械臂控制线程
 
+
+void servo_delay_ms(int ms);
 #endif /* APPLICATIONS_ARM_H_ */
